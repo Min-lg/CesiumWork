@@ -3,6 +3,7 @@
 import * as Cesium from 'cesium';
 // import "cesium/Build/Cesium/Widgets/widgets.css";
 import { onMounted } from 'vue';
+import positionImg from '@/assets/img/position.png'
 
 onMounted(async () => {
     Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJiM2MyZDMwMy1kYzcyLTQ2YTAtYjc3OC0yZTJiZWFlMTY4ZDQiLCJpZCI6Mjc0NTg3LCJpYXQiOjE3MzkxMDgzNDJ9.Zzu42FvXHZ2iDHvghKkGSr3fvKK4H6hHHJbWid-QS5I';
@@ -53,7 +54,7 @@ onMounted(async () => {
     viewer.entities.add({
         position: Cesium.Cartesian3.fromDegrees(116.4074, 39.9042, 10000),
         billboard: {
-            image: '/src/assets/img/position.png',
+            image: positionImg,
             scale: 0.15,
             color: Cesium.Color.RED
         },
