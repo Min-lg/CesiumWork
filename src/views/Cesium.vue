@@ -103,6 +103,10 @@ function goBack() {
     // 如果返回到初始视角，重置为全国数据
     if (cameraPositions.value.length === 0) {
         currentCity.value = '全国平均';
+        // 清除统计图
+        viewer.entities.values
+            .filter(entity => entity.id?.startsWith('chart-'))
+            .forEach(entity => viewer.entities.remove(entity));
     }
 
     viewer.camera.flyTo({
@@ -178,28 +182,88 @@ onMounted(async () => {
 
     viewerInstance.value = viewer; // 保存 viewer 实例
 
-    // 添加中国的地图边界轮廓线
-    let chinaMapLine = Cesium.GeoJsonDataSource.load('https://geo.datav.aliyun.com/areas_v3/bound/100000.json', {
-        stroke: Cesium.Color.AQUA,
-        fill: Cesium.Color.PALETURQUOISE.withAlpha(0),//填充区域设置为透明
-        strokeWidth: 10,//在这里设置线宽度无效，所以在下边单独进行了线条样式设置
-        markerSymbol: '?'
+    // 先定义 PolylineTrailMaterialProperty
+    function PolylineTrailMaterialProperty(options) {
+        this._definitionChanged = new Cesium.Event();
+        this._color = undefined;
+        this._trailLength = undefined;
+        this._period = undefined;
+        this._time = new Date().getTime();
+
+        this.color = options.color;
+        this.trailLength = options.trailLength;
+        this.period = options.period;
+    }
+
+    Object.defineProperties(PolylineTrailMaterialProperty.prototype, {
+        isConstant: {
+            get: function () {
+                return false;
+            }
+        },
+        definitionChanged: {
+            get: function () {
+                return this._definitionChanged;
+            }
+        },
+        color: Cesium.createPropertyDescriptor('color'),
+        trailLength: Cesium.createPropertyDescriptor('trailLength'),
+        period: Cesium.createPropertyDescriptor('period')
     });
 
-    chinaMapLine.then(dataSource => {
-        viewer.dataSources.add(dataSource);
-        let entities = dataSource.entities.values;
-        for (let i = 0; i < entities.length; i++) {
-            let entity = entities[i];
-            let polyPositions = entity.polygon.hierarchy.getValue(
-                Cesium.JulianDate.now()
-            ).positions;
-            let positions = entity.polygon.hierarchy._value.positions;
-            entity.polyline = {
-                positions: positions,
-                width: 2,
-                material: Cesium.Color.fromBytes(3, 255, 255)
-            };
+    PolylineTrailMaterialProperty.prototype.getType = function () {
+        return 'PolylineTrail';
+    };
+
+    PolylineTrailMaterialProperty.prototype.getValue = function (time, result) {
+        if (!Cesium.defined(result)) {
+            result = {};
+        }
+        result.color = Cesium.Property.getValueOrClonedDefault(this._color, time, Cesium.Color.WHITE, result.color);
+        result.trailLength = this.trailLength;
+        result.period = this.period;
+        result.time = (((new Date().getTime() - this._time) % (this.period * 1000)) / (this.period * 1000));
+        return result;
+    };
+
+    PolylineTrailMaterialProperty.prototype.equals = function (other) {
+        return (
+            this === other ||
+            (other instanceof PolylineTrailMaterialProperty &&
+                Cesium.Property.equals(this._color, other._color) &&
+                this._trailLength === other._trailLength &&
+                this._period === other._period)
+        );
+    };
+
+    // 注册材质
+    Cesium.Material._materialCache.addMaterial('PolylineTrail', {
+        fabric: {
+            type: 'PolylineTrail',
+            uniforms: {
+                color: new Cesium.Color(1.0, 0.0, 0.0, 0.5),
+                time: 0,
+                trailLength: 0.5,
+                period: 2.0
+            },
+            source: `
+                czm_material czm_getMaterial(czm_materialInput materialInput) {
+                    czm_material material = czm_getDefaultMaterial(materialInput);
+                    vec2 st = materialInput.st;
+                    float t = time;
+
+                    float trail = smoothstep(1.0 - trailLength, 1.0, fract(st.s - t));
+                    trail *= smoothstep(0.0, trailLength, fract(st.s - t));
+
+                    material.diffuse = color.rgb;
+                    material.alpha = color.a * trail;
+
+                    return material;
+                }
+            `
+        },
+        translucent: function () {
+            return true;
         }
     });
 
@@ -285,9 +349,211 @@ onMounted(async () => {
         };
     }
 
+    // 添加3D统计图相关函数
+    function create3DChart(lon, lat, data) {
+        // 清除之前的统计图
+        viewerInstance.value.entities.values
+            .filter(entity => entity.id?.startsWith('chart-'))
+            .forEach(entity => viewerInstance.value.entities.remove(entity));
+
+        // 设置基础参数
+        const offsetLon = -0.6;
+        const offsetLat = -0.8;
+
+        // 优化缓动函数，使用更平滑的曲线
+        const easeInOut = (t) => {
+            // 使用三次贝塞尔曲线实现更平滑的过渡
+            return t < 0.5
+                ? 4 * t * t * t
+                : 1 - Math.pow(-2 * t + 2, 3) / 2;
+        };
+
+        // 添加动画控制
+        const startTime = Date.now();
+        const animationDuration = 1500; // 1.5秒的增长动画
+
+        // 计算固定位置
+        const chartPosition = Cesium.Cartesian3.fromDegrees(lon + offsetLon, lat + offsetLat, data.airQuality * 250);
+        const chartPositionVeg = Cesium.Cartesian3.fromDegrees(lon + offsetLon, lat + offsetLat + 0.1, data.vegetation * 250);
+
+        // 创建空气质量柱状图
+        viewerInstance.value.entities.add({
+            id: 'chart-air',
+            position: chartPosition, // 使用固定位置
+            cylinder: {
+                length: new Cesium.CallbackProperty((time) => {
+                    const elapsedTime = Date.now() - startTime;
+                    const progress = Math.min(elapsedTime / animationDuration, 1);
+                    const easeProgress = easeInOut(progress);
+                    return data.airQuality * 1000 * easeProgress;
+                }, false),
+                topRadius: 5000,
+                bottomRadius: 5000,
+                material: new Cesium.ColorMaterialProperty(
+                    new Cesium.CallbackProperty(() => {
+                        const time = Date.now();
+                        const phase = (time % 6000) / 6000;
+                        const easedPhase = easeInOut(phase);
+                        const alpha = 0.92 - easedPhase * 0.08;
+                        const g = 0.5 + easedPhase * 0.08;
+                        return new Cesium.Color(0.1, g, 1.0, alpha);
+                    }, false)
+                ),
+                outline: false
+            }
+        });
+
+        // 添加空气质量光环效果，跟随柱子高度增长
+        viewerInstance.value.entities.add({
+            id: 'chart-air-glow',
+            position: chartPosition, // 使用相同的固定位置
+            cylinder: {
+                length: new Cesium.CallbackProperty((time) => {
+                    const elapsedTime = Date.now() - startTime;
+                    const progress = Math.min(elapsedTime / animationDuration, 1);
+                    const easeProgress = easeInOut(progress);
+                    return (data.airQuality * 1000 + 2000) * easeProgress;
+                }, false),
+                topRadius: 6000,
+                bottomRadius: 6000,
+                material: new Cesium.ColorMaterialProperty(
+                    new Cesium.CallbackProperty(() => {
+                        const time = Date.now();
+                        const phase = (time % 8000) / 8000;
+                        const easedPhase = easeInOut(phase);
+                        const alpha = 0.25 + easedPhase * 0.1;
+                        return new Cesium.Color(0.2, 0.6, 1.0, alpha);
+                    }, false)
+                ),
+                outline: false
+            }
+        });
+
+        // 创建植被覆盖率柱状图
+        viewerInstance.value.entities.add({
+            id: 'chart-vegetation',
+            position: chartPositionVeg, // 使用固定位置
+            cylinder: {
+                length: new Cesium.CallbackProperty((time) => {
+                    const elapsedTime = Date.now() - startTime;
+                    const progress = Math.min(elapsedTime / animationDuration, 1);
+                    const easeProgress = easeInOut(progress);
+                    return data.vegetation * 1000 * easeProgress;
+                }, false),
+                topRadius: 5000,
+                bottomRadius: 5000,
+                material: new Cesium.ColorMaterialProperty(
+                    new Cesium.CallbackProperty(() => {
+                        const time = Date.now();
+                        const phase = ((time + 3000) % 6000) / 6000;
+                        const easedPhase = easeInOut(phase);
+                        const alpha = 0.92 - easedPhase * 0.08;
+                        const g = 0.85 + easedPhase * 0.08;
+                        return new Cesium.Color(0.2, g, 0.3, alpha);
+                    }, false)
+                ),
+                outline: false
+            }
+        });
+
+        // 添加植被覆盖率光环效果，跟随柱子高度增长
+        viewerInstance.value.entities.add({
+            id: 'chart-vegetation-glow',
+            position: chartPositionVeg, // 使用相同的固定位置
+            cylinder: {
+                length: new Cesium.CallbackProperty((time) => {
+                    const elapsedTime = Date.now() - startTime;
+                    const progress = Math.min(elapsedTime / animationDuration, 1);
+                    const easeProgress = easeInOut(progress);
+                    return (data.vegetation * 1000 + 2000) * easeProgress;
+                }, false),
+                topRadius: 6000,
+                bottomRadius: 6000,
+                material: new Cesium.ColorMaterialProperty(
+                    new Cesium.CallbackProperty(() => {
+                        const time = Date.now();
+                        const phase = ((time + 1500) % 8000) / 8000;
+                        const easedPhase = easeInOut(phase);
+                        const alpha = 0.25 + easedPhase * 0.1;
+                        return new Cesium.Color(0.2, 0.9, 0.3, alpha);
+                    }, false)
+                ),
+                outline: false
+            }
+        });
+
+        // 底座使用固定位置
+        const basePosition = Cesium.Cartesian3.fromDegrees(lon + offsetLon, lat + offsetLat, 0);
+        viewerInstance.value.entities.add({
+            id: 'chart-base',
+            position: basePosition,
+            cylinder: {
+                length: 500,
+                topRadius: 25000,
+                bottomRadius: 25000,
+                material: new Cesium.ColorMaterialProperty(
+                    new Cesium.CallbackProperty(() => {
+                        const time = Date.now();
+                        const phase = (time % 10000) / 10000;
+                        const easedPhase = easeInOut(phase);
+                        const alpha = 0.18 + easedPhase * 0.07;
+                        return new Cesium.Color(0.2, 0.6, 1.0, alpha);
+                    }, false)
+                ),
+                outline: false
+            }
+        });
+
+        // 添加空气质量标签
+        viewerInstance.value.entities.add({
+            id: 'chart-air-label',
+            position: new Cesium.CallbackProperty(() => {
+                return Cesium.Cartesian3.fromDegrees(
+                    lon + offsetLon,
+                    lat + offsetLat,
+                    data.airQuality * 1000 + 5000
+                );
+            }, false),
+            label: {
+                text: `空气质量: ${data.airQuality}`,
+                font: '16px "Microsoft YaHei"',
+                fillColor: Cesium.Color.WHITE,
+                outlineColor: Cesium.Color.BLACK,
+                outlineWidth: 2,
+                style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                pixelOffset: new Cesium.Cartesian2(0, -10),
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
+            }
+        });
+
+        // 添加植被覆盖率标签
+        viewerInstance.value.entities.add({
+            id: 'chart-vegetation-label',
+            position: new Cesium.CallbackProperty(() => {
+                return Cesium.Cartesian3.fromDegrees(
+                    lon + offsetLon,
+                    lat + offsetLat + 0.1,
+                    data.vegetation * 1000 + 5000
+                );
+            }, false),
+            label: {
+                text: `植被覆盖: ${data.vegetation}%`,
+                font: '16px "Microsoft YaHei"',
+                fillColor: Cesium.Color.WHITE,
+                outlineColor: Cesium.Color.BLACK,
+                outlineWidth: 2,
+                style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                pixelOffset: new Cesium.Cartesian2(0, -10),
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
+            }
+        });
+    }
+
     // 5. 优化 flyToCity 函数
     function flyToCity(lon, lat, name) {
-        savePosition(viewer.camera);
+        savePosition(viewerInstance.value.camera);
         currentCity.value = name;
 
         if (!ecoData.value[name]) {
@@ -300,13 +566,20 @@ onMounted(async () => {
             height: CITY_VIEW.height
         };
 
-        viewer.camera.flyTo({
+        // 先执行相机飞行，在完成回调中创建3D统计图
+        viewerInstance.value.camera.flyTo({
             ...createCameraAnimation(
                 destination,
                 CITY_VIEW,
                 ANIMATION_DURATION.CITY_FLY
             ),
-            complete: () => console.log(`已到达${name}`)
+            complete: () => {
+                console.log(`已到达${name}`);
+                // 相机到达后延迟300ms再创建统计图
+                setTimeout(() => {
+                    create3DChart(lon, lat, ecoData.value[name]);
+                }, 300);
+            }
         });
     }
 
@@ -368,6 +641,56 @@ onMounted(async () => {
         }
     });
 
+    // 添加中国边界线
+    let chinaMapLine = Cesium.GeoJsonDataSource.load('https://geo.datav.aliyun.com/areas_v3/bound/100000.json', {
+        stroke: new Cesium.Color(0.4, 0.8, 1.0, 0.3),
+        fill: Cesium.Color.TRANSPARENT,
+        strokeWidth: 10,
+        markerSymbol: '?'
+    });
+
+    chinaMapLine.then(dataSource => {
+        viewer.dataSources.add(dataSource);
+        let entities = dataSource.entities.values;
+
+        for (let i = 0; i < entities.length; i++) {
+            let entity = entities[i];
+            let positions = entity.polygon.hierarchy._value.positions;
+
+            // 创建基础轮廓线（暗色）
+            entity.polyline = {
+                positions: positions,
+                width: 2,
+                material: new Cesium.Color(0.4, 0.8, 1.0, 0.1)
+            };
+
+            // 创建发光效果线
+            viewer.entities.add({
+                polyline: {
+                    positions: positions,
+                    width: 3,
+                    material: new Cesium.PolylineGlowMaterialProperty({
+                        glowPower: 0.15,
+                        taperPower: 0.5,
+                        color: new Cesium.Color(0.4, 0.8, 1.0, 0.8)
+                    })
+                }
+            });
+
+            // 创建流动发光效果
+            viewer.entities.add({
+                polyline: {
+                    positions: positions,
+                    width: 4,
+                    material: new PolylineTrailMaterialProperty({
+                        color: new Cesium.Color(0.4, 0.8, 1.0, 0.6),
+                        trailLength: 0.3,
+                        period: 3.0
+                    })
+                }
+            });
+        }
+    });
 })
 </script>
 <template>
@@ -379,6 +702,11 @@ onMounted(async () => {
                 <div v-show="showBackButton" class="back-button" @click="goBack">
                     <span class="back-icon">←</span>
                     <span>返回上一视角</span>
+                </div>
+                <!-- 修改提示信息，添加与面板同步的类名 -->
+                <div class="tip-message" :class="{ 'tip-hidden': !showPanel }">
+                    <span class="tip-icon">🔍</span>
+                    <span>点击城市查看市级信息</span>
                 </div>
                 <div class="eco-panel" :class="{ 'panel-hidden': !showPanel }">
                     <div class="panel-header">
@@ -640,6 +968,61 @@ onMounted(async () => {
 @keyframes fadeIn {
     from {
         opacity: 0;
+        transform: translateY(-10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* 修改提示信息样式 */
+.tip-message {
+    position: absolute;
+    top: 80px;
+    left: 20px;
+    background: linear-gradient(135deg, rgba(16, 36, 57, 0.95), rgba(0, 0, 0, 0.85));
+    color: #4CAFFF;
+    padding: 10px 15px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(76, 175, 255, 0.2);
+    box-shadow: 0 0 20px rgba(0, 191, 255, 0.1);
+    font-size: 14px;
+    transform: translateX(0);
+    opacity: 1;
+    transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    /* 使用与面板相同的过渡效果 */
+    will-change: transform, opacity;
+}
+
+/* 提示信息隐藏状态 */
+.tip-hidden {
+    transform: translateX(-50px);
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* 修改动画效果，使其与面板一致 */
+.tip-message,
+.eco-panel {
+    animation: fadeIn 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 悬浮效果 */
+.tip-message:hover {
+    background: linear-gradient(135deg, rgba(26, 46, 67, 0.95), rgba(10, 10, 10, 0.85));
+    box-shadow: 0 0 25px rgba(0, 191, 255, 0.2);
+}
+
+/* 确保动画关键帧定义一致 */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
         transform: translateX(-20px);
     }
 
@@ -647,5 +1030,11 @@ onMounted(async () => {
         opacity: 1;
         transform: translateX(0);
     }
+}
+
+/* 添加发光动画效果 */
+.tip-message,
+.eco-panel {
+    animation: glow 6s ease-in-out infinite;
 }
 </style>
