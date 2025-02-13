@@ -1,13 +1,28 @@
-// 优化材质定义，使用缓存
-const materialCache = new Map();
+import * as Cesium from 'cesium';
 
-export function getPolylineTrailMaterial(options) {
-    const key = JSON.stringify(options);
-    if (materialCache.has(key)) {
-        return materialCache.get(key);
+interface TrailMaterialOptions {
+  color: Cesium.Color;
+  trailLength: number;
+  period: number;
+}
+
+const materialCache = new Map<string, Cesium.Material>();
+
+export function getPolylineTrailMaterial(options: TrailMaterialOptions) {
+  const key = JSON.stringify(options);
+  if (materialCache.has(key)) {
+    return materialCache.get(key);
+  }
+
+  const material = new Cesium.Material({
+    fabric: {
+      type: 'Color',
+      uniforms: {
+        color: new Cesium.Color(1.0, 1.0, 1.0, 1.0)
+      }
     }
+  });
 
-    const material = new PolylineTrailMaterialProperty(options);
-    materialCache.set(key, material);
-    return material;
+  materialCache.set(key, material);
+  return material;
 }

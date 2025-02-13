@@ -1,4 +1,9 @@
+import * as Cesium from 'cesium';
 import { debounce, throttle } from 'lodash-es';
+
+interface Handlers {
+    onClick?: (entity: Cesium.Entity) => void;
+}
 
 export function setupEventHandlers(viewer: Cesium.Viewer, handlers: Handlers) {
     // 节流处理相机移动事件
@@ -7,7 +12,7 @@ export function setupEventHandlers(viewer: Cesium.Viewer, handlers: Handlers) {
     }, 16); // 约60fps
 
     // 防抖处理点击事件
-    const handleClick = debounce((movement) => {
+    const handleClick = debounce((movement: { position: Cesium.Cartesian2 }) => {
         const pickedObject = viewer.scene.pick(movement.position);
         if (Cesium.defined(pickedObject)) {
             handlers.onClick?.(pickedObject.id);

@@ -1,3 +1,6 @@
+// 添加 Cesium 导入
+import * as Cesium from 'cesium';
+
 // 优化 Viewer 配置
 export function createViewer(container: string) {
     return new Cesium.Viewer(container, {

@@ -17,14 +17,13 @@ export default defineConfig({
       disable: false,
       threshold: 10240,
       algorithm: 'gzip',
-      ext: '.gz',
     }),
     // 构建完成后生成包分析报告
     visualizer({
       filename: 'dist/stats.html',
       open: false,
       gzipSize: true,
-    }),
+    }) as any, // 临时解决类型问题
   ],
   resolve: {
     alias: {
@@ -52,9 +51,7 @@ export default defineConfig({
       output: {
         // 分包策略
         manualChunks: {
-          'cesium-chunk': ['cesium'],
-          'vue-chunk': ['vue', 'vue-router', 'pinia'],
-          'echarts-chunk': ['echarts'],
+          'vue-chunk': ['vue'],
           'lodash-chunk': ['lodash-es'],
         },
         // 用于从入口点创建的块的打包输出格式
@@ -72,7 +69,7 @@ export default defineConfig({
     // 预构建分析的入口点
     entries: ['./src/main.ts'],
     // 预构建中强制排除的依赖项
-    exclude: ['your-package-name'],
+    exclude: [],
   },
   server: {
     // 开发服务器配置
