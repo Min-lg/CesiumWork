@@ -11,8 +11,7 @@
   "dependencies": {
     "cesium": "^1.126.0",
     "vite-plugin-cesium": "^1.2.23",
-    "vue": "^3.x.x",
-    "vue-router": "^4.x.x"
+    "vue": "^3.x.x"
   },
   "devDependencies": {
     "@types/cesium": "^1.70.4",
