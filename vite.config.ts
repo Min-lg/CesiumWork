@@ -5,6 +5,7 @@ import cesium from "vite-plugin-cesium";
 import compression from 'vite-plugin-compression';
 import { visualizer } from 'rollup-plugin-visualizer';
 import { splitVendorChunkPlugin } from 'vite';
+import { resolve } from 'path';
 
 export default defineConfig({
   plugins: [
@@ -60,6 +61,9 @@ export default defineConfig({
         assetFileNames: 'assets/[ext]/[name]-[hash].[ext]',
         // 拆分 js 到模块文件夹
         entryFileNames: 'assets/js/[name]-[hash].js',
+      },
+      input: {
+        main: resolve(__dirname, 'index.html'),
       },
     },
     // 设置块大小警告的限制

@@ -1,15 +1,24 @@
+// 定义 Worker 错误类型
+interface WorkerError extends ErrorEvent {
+  message: string;
+  filename: string;
+  lineno: number;
+  colno: number;
+}
+
 // 处理坐标转换和数据计算的 Worker
-self.onerror = (error) => {
+self.onerror = ((event: ErrorEvent) => {
+  const workerError = event as unknown as WorkerError;
   self.postMessage({
     type: 'error',
     error: {
-      message: error.message,
-      filename: error.filename,
-      lineno: error.lineno,
-      colno: error.colno
+      message: workerError.message || 'Unknown error',
+      filename: workerError.filename || '',
+      lineno: workerError.lineno || 0,
+      colno: workerError.colno || 0
     }
   });
-};
+}) as OnErrorEventHandler;
 
 self.onmessage = (e) => {
   try {
@@ -57,3 +66,6 @@ function processTerrainData(data: any) {
   }
   return data;
 }
+
+// 确保 TypeScript 知道这是一个 Worker 文件
+export {};
